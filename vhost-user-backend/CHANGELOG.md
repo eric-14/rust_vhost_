@@ -5,6 +5,8 @@
 ### Added
 - [[#355]](https://github.com/rust-vmm/vhost/pull/355) Add an explicit shutdown handle for active daemon connections.
 ### Changed
+- [[316](https://github.com/rust-vmm/vhost/pull/316)] Use mio to replace Epoll. Expose event_loop::EventSet.
+
 ### Deprecated
 ### Fixed
 

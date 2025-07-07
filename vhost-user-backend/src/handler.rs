@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::thread;
 
 use crate::bitmap::{BitmapReplace, MemRegionBitmap, MmapLogReg};
+use crate::event_loop::EventSet;
 #[cfg(feature = "postcopy")]
 use userfaultfd::{Uffd, UffdBuilder};
 use vhost::vhost_user::message::{
@@ -33,11 +34,10 @@ use vm_memory::mmap::NewBitmap;
 use vm_memory::{
     GuestAddress, GuestAddressSpace, GuestMemoryBackend, GuestMemoryMmap, GuestRegionMmap,
 };
-use vmm_sys_util::epoll::EventSet;
 
 use super::backend::VhostUserBackend;
-use super::event_loop::VringEpollHandler;
-use super::event_loop::{VringEpollError, VringEpollResult};
+use super::event_loop::VringPollHandler;
+use super::event_loop::{VringPollError, VringPollResult};
 use super::vring::VringT;
 use super::GM;
 
@@ -52,7 +52,7 @@ pub enum VhostUserHandlerError {
     /// Failed to create a `Vring`.
     CreateVring(VirtQueError),
     /// Failed to create vring worker.
-    CreateEpollHandler(VringEpollError),
+    CreatePollHandler(VringPollError),
     /// Failed to spawn vring worker.
     SpawnVringWorker(io::Error),
     /// Could not find the mapping from memory regions.
@@ -65,8 +65,8 @@ impl std::fmt::Display for VhostUserHandlerError {
             VhostUserHandlerError::CreateVring(e) => {
                 write!(f, "failed to create vring: {e}")
             }
-            VhostUserHandlerError::CreateEpollHandler(e) => {
-                write!(f, "failed to create vring epoll handler: {e}")
+            VhostUserHandlerError::CreatePollHandler(e) => {
+                write!(f, "failed to create vring poll handler: {e}")
             }
             VhostUserHandlerError::SpawnVringWorker(e) => {
                 write!(f, "failed spawning the vring worker: {e}")
@@ -92,7 +92,7 @@ struct AddrMapping {
 
 pub struct VhostUserHandler<T: VhostUserBackend> {
     backend: T,
-    handlers: Vec<Arc<VringEpollHandler<T>>>,
+    handlers: Vec<Arc<VringPollHandler<T>>>,
     owned: bool,
     features_acked: bool,
     acked_features: u64,
@@ -105,7 +105,7 @@ pub struct VhostUserHandler<T: VhostUserBackend> {
     vrings: Vec<T::Vring>,
     #[cfg(feature = "postcopy")]
     uffd: Option<Uffd>,
-    worker_threads: Vec<thread::JoinHandle<VringEpollResult<()>>>,
+    worker_threads: Vec<thread::JoinHandle<VringPollResult<()>>>,
 }
 
 // Ensure VhostUserHandler: Clone + Send + Sync + 'static.
@@ -138,8 +138,8 @@ where
             }
 
             let handler = Arc::new(
-                VringEpollHandler::new(backend.clone(), thread_vrings, thread_id)
-                    .map_err(VhostUserHandlerError::CreateEpollHandler)?,
+                VringPollHandler::new(backend.clone(), thread_vrings, thread_id)
+                    .map_err(VhostUserHandlerError::CreatePollHandler)?,
             );
             let handler2 = handler.clone();
             let worker_thread = thread::Builder::new()
@@ -193,7 +193,7 @@ impl<T> VhostUserHandler<T>
 where
     T: VhostUserBackend,
 {
-    pub(crate) fn get_epoll_handlers(&self) -> Vec<Arc<VringEpollHandler<T>>> {
+    pub(crate) fn get_poll_handlers(&self) -> Vec<Arc<VringPollHandler<T>>> {
         self.handlers.clone()
     }
 
@@ -210,7 +210,7 @@ where
         self.update_vring_registration(vring, index)
     }
 
-    /// Adds or removes the vring's kick fd to the epoll instance based on the vring status.
+    /// Adds or removes the vring's kick fd to the epoll/kqueue instance based on the vring status.
     /// Ensures that notifications are handled only while the vring is both started and enabled
     /// and that no notifications are lost.
     fn update_vring_registration(&self, vring: &T::Vring, index: u8) -> VhostUserResult<()> {
@@ -223,7 +223,7 @@ where
                     if vring_state.get_queue().ready() && vring_state.is_enabled() {
                         if let Err(e) = self.handlers[thread_index].register_event(
                             fd.as_raw_fd(),
-                            EventSet::IN,
+                            EventSet::Readable,
                             evt_idx as usize,
                         ) {
                             if e.kind() != io::ErrorKind::AlreadyExists {
@@ -233,11 +233,7 @@ where
                             }
                         }
                     } else {
-                        let _ = self.handlers[thread_index].unregister_event(
-                            fd.as_raw_fd(),
-                            EventSet::IN,
-                            evt_idx as usize,
-                        );
+                        let _ = self.handlers[thread_index].unregister_event(fd.as_raw_fd());
                     }
                     break;
                 }

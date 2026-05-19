@@ -1,0 +1,22 @@
+name: macOS CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Show macOS version
+        run: sw_vers
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Run script
+        run: echo "Hello from macOS runner"

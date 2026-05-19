@@ -117,7 +117,7 @@ impl VhostUserBackendMut for MockVhostBackend {
     fn handle_event(
         &mut self,
         _device_event: u16,
-        _evset: Interest,
+        _evset: EventSet,
         _vrings: &[VringRwLock],
         _thread_id: usize,
     ) -> Result<()> {

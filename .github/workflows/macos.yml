@@ -30,7 +30,7 @@ jobs:
           cargo --version
 
       - name: Build vhost-user-backend
-        run: cargo build -p vhost-user-backend --locked
+        run: cargo build -p vhost-user-backend
 
       - name: Run vhost-user-backend tests
         run: cargo test -p vhost-user-backend --locked -- --nocapture

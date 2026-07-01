@@ -236,7 +236,7 @@ where
                         break 'poll;
                     }
                 } else {
-                    println!("ignoring unknown event set: {:#x}", event.token().0);
+                    log::warn!("ignoring unknown event set: {:#x}", event.token().0);
                 }
             }
         }

@@ -75,17 +75,22 @@ impl EventSet {
     }
 }
 
-fn event_to_event_set(evt: &Event) -> Option<EventSet> {
+fn event_to_event_set(evt: &Event) -> Result<EventSet> {
     if evt.is_readable() && evt.is_writable() {
-        return Some(EventSet::All);
+        Ok(EventSet::All)
+    } else if evt.is_readable() {
+        Ok(EventSet::Readable)
+    } else if evt.is_writable() {
+        Ok(EventSet::Writable)
+    } else if evt.is_read_closed() {
+        Err(io::Error::other("Event Err is read closed"))
+    } else if evt.is_write_closed() {
+        Err(io::Error::other("Event Err is write closed"))
+    } else if evt.is_error() {
+        Err(io::Error::other("Event Epoll Error"))
+    } else {
+        Err(io::Error::other("Unknown or unhandled event state"))
     }
-    if evt.is_readable() {
-        return Some(EventSet::Readable);
-    }
-    if evt.is_writable() {
-        return Some(EventSet::Writable);
-    }
-    None
 }
 
 /// Epoll/kqueue event handler to manage and process epoll/kqueue events for registered file descriptor.
@@ -236,13 +241,20 @@ where
             for event in &events {
                 let token = event.token();
 
-                if let Some(evt_set) = event_to_event_set(event) {
-                    if self.handle_event(token.0, evt_set)? {
-                        break 'poll;
+                match event_to_event_set(event) {
+                    Ok(evt_set) => {
+                        if self.handle_event(token.0, evt_set)? {
+                            break 'poll;
+                        }
                     }
-                } else {
-                    log::warn!("ignoring unknown event set: {:#x}", event.token().0);
-                }
+                    Err(err) => {
+                        log::warn!(
+                            "Ignoring unknown event set for token {:#x} error: {:?}",
+                            token.0,
+                            err
+                        );
+                    }
+                };
             }
         }
 

@@ -167,12 +167,12 @@ where
     ///
     /// When this event is later triggered, the backend implementation of `handle_event` will be
     /// called.
-    pub fn register_listener(&self, fd: RawFd, ev_type: EventSet, data: usize) -> Result<()> {
+    pub fn register_listener(&self, fd: RawFd, ev_type: EventSet, queue_idx: usize) -> Result<()> {
         // `data` range [0...num_queues] is reserved for queues and exit event.
-        if data <= self.backend.num_queues() {
+        if queue_idx <= self.backend.num_queues() {
             Err(io::Error::from_raw_os_error(libc::EINVAL))
         } else {
-            self.register_event(fd, ev_type, data)
+            self.register_event(fd, ev_type, queue_idx)
         }
     }
 
@@ -180,22 +180,27 @@ where
     ///
     /// If the event is triggered after this function has been called, the event will be silently
     /// dropped.
-    pub fn unregister_listener(&self, fd: RawFd, data: usize) -> Result<()> {
+    pub fn unregister_listener(&self, fd: RawFd, queue_idx: usize) -> Result<()> {
         // `data` range [0...num_queues] is reserved for queues and exit event.
-        if data <= self.backend.num_queues() {
+        if queue_idx <= self.backend.num_queues() {
             Err(io::Error::from_raw_os_error(libc::EINVAL))
         } else {
             self.unregister_event(fd)
         }
     }
 
-    pub(crate) fn register_event(&self, fd: RawFd, ev_type: EventSet, data: usize) -> Result<()> {
+    pub(crate) fn register_event(
+        &self,
+        fd: RawFd,
+        ev_type: EventSet,
+        queue_idx: usize,
+    ) -> Result<()> {
         let mut fd_set = self.fd_set.lock().unwrap();
         if fd_set.contains(&fd) {
             return Err(io::Error::from_raw_os_error(libc::EEXIST));
         }
         self.registry
-            .register(&mut SourceFd(&fd), Token(data), ev_type.to_interest())
+            .register(&mut SourceFd(&fd), Token(queue_idx), ev_type.to_interest())
             .map_err(std::io::Error::other)?;
         fd_set.insert(fd);
         Ok(())

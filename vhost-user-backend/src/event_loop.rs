@@ -100,7 +100,6 @@ fn event_to_event_set(evt: &Event) -> Result<EventSet> {
 /// - remove registered file descriptors from the epoll/kqueue fd
 /// - run the event loop to handle pending events on the epoll/kqueue fd
 pub struct VringPollHandler<T: VhostUserBackend> {
-    poller: Mutex<Poll>,
     registry: Registry,
     // Record the registered fd.
     // Because in mio, consecutive calls to register is unspecified behavior.
@@ -130,8 +129,8 @@ where
         backend: T,
         vrings: Vec<T::Vring>,
         thread_id: usize,
+        poller: &Poll,
     ) -> VringPollResult<Self> {
-        let poller = Poll::new().map_err(VringPollError::PollerCreate)?;
         let exit_event_fd = backend.exit_event(thread_id);
         let fd_set = Mutex::new(HashSet::new());
 
@@ -157,7 +156,6 @@ where
         };
 
         Ok(VringPollHandler {
-            poller: Mutex::new(poller),
             registry,
             fd_set,
             backend,
@@ -222,14 +220,12 @@ where
     ///
     /// The event loop will be terminated once an event is received from the `exit event fd`
     /// associated with the backend.
-    pub(crate) fn run(&self) -> VringPollResult<()> {
+    pub(crate) fn run(&self, mut poller: Poll) -> VringPollResult<()> {
         const POLL_EVENTS_LEN: usize = 100;
 
         let mut events = Events::with_capacity(POLL_EVENTS_LEN);
         'poll: loop {
-            self.poller
-                .lock()
-                .unwrap()
+            poller
                 .poll(&mut events, None)
                 .map_err(VringPollError::PollerWait)?;
 
@@ -283,7 +279,7 @@ where
 
 impl<T: VhostUserBackend> AsRawFd for VringPollHandler<T> {
     fn as_raw_fd(&self) -> RawFd {
-        self.poller.lock().unwrap().as_raw_fd()
+        self.registry.as_raw_fd()
     }
 }
 
@@ -304,7 +300,8 @@ mod tests {
         let vring = VringRwLock::new(mem, 0x1000).unwrap();
         let backend = Arc::new(Mutex::new(MockVhostBackend::new()));
 
-        let handler = VringPollHandler::new(backend, vec![vring], 0x1).unwrap();
+        let poller = Poll::new().unwrap();
+        let handler = VringPollHandler::new(backend, vec![vring], 0x1, &poller).unwrap();
 
         let (consumer, _notifier) = new_event_consumer_and_notifier(EventFlag::empty()).unwrap();
         handler
@@ -330,10 +327,8 @@ mod tests {
         handler
             .unregister_listener(consumer.as_raw_fd(), 1)
             .unwrap_err();
-        // Check we retrieve the correct file descriptor
-        assert_eq!(
-            handler.as_raw_fd(),
-            handler.poller.lock().unwrap().as_raw_fd()
-        );
+        // Validate registry fd
+        assert_ne!(handler.as_raw_fd(), -1);
+        assert_ne!(handler.as_raw_fd(), poller.as_raw_fd());
     }
 }

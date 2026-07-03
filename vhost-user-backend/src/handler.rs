@@ -15,6 +15,7 @@ use std::thread;
 
 use crate::bitmap::{BitmapReplace, MemRegionBitmap, MmapLogReg};
 use crate::event_loop::EventSet;
+use mio::Poll;
 #[cfg(feature = "postcopy")]
 use userfaultfd::{Uffd, UffdBuilder};
 use vhost::vhost_user::message::{
@@ -135,14 +136,17 @@ where
                 }
             }
 
+            let poller = Poll::new()
+                .map_err(VringPollError::PollerCreate)
+                .map_err(VhostUserHandlerError::CreatePollHandler)?;
             let handler = Arc::new(
-                VringPollHandler::new(backend.clone(), thread_vrings, thread_id)
+                VringPollHandler::new(backend.clone(), thread_vrings, thread_id, &poller)
                     .map_err(VhostUserHandlerError::CreatePollHandler)?,
             );
             let handler2 = handler.clone();
             let worker_thread = thread::Builder::new()
                 .name("vring_worker".to_string())
-                .spawn(move || handler2.run())
+                .spawn(move || handler2.run(poller))
                 .map_err(VhostUserHandlerError::SpawnVringWorker)?;
 
             handlers.push(handler);
